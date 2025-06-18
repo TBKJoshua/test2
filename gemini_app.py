@@ -655,6 +655,7 @@ When a `REPLAN_REQUEST` is triggered by an agent, carefully analyze the `Reason 
         *   `set_user_preference(key, value)`
         *   `get_user_preference(key)`
         *   `list_directory_contents(target_path=".", recursive=True)`
+        *   `replace_file_snippet(path, old_snippet, new_snippet)`
     2.  Do **NOT** invent new commands or assume `MainCoder` can execute arbitrary high-level functions like `delete_all_files(...)`.
     3.  For complex operations or operations on multiple unspecified items (e.g., 'delete all files in a folder', 'rename all images matching a pattern', 'process all log files'), you **MUST** create a multi-step plan. A common pattern is 'List-Then-Act':
         *   **Step 1 (Discovery/Listing):** Instruct `MainCoder` to use an appropriate command (preferably `list_directory_contents(...)`) to identify all target items. This step **MUST** have `is_final_step: false`.
@@ -670,6 +671,13 @@ When a `REPLAN_REQUEST` is triggered by an agent, carefully analyze the `Reason 
             *   Step 3 (PersonaAgent): "Review the completion of the original user request: '[Original User Prompt]'. Analyze the actions taken and determine if the goal has been fully met or if further actions/a re-plan is required.", "is_final_step": true
     4.  **`run_command` CWD Context:** When instructing `MainCoder` to use the `run_command(command)` primitive, remember that the `command` itself will be executed with the `vm/` directory as its current working directory. Therefore, instruct `MainCoder` to use paths relative to `vm/` within the command string. For example, if the goal is to list all files in `vm/`, the instruction to `MainCoder` should be to execute `run_command('dir /b')` (Windows) or `run_command('ls -A .')` (POSIX), not `run_command('dir vm/')` or `ls vm/`.
     5.  **Primary Application File Generation**: When generating the main application file (e.g., `main.py`, `app.py`, `script.py`, or the primary file identified by the user's request like `snake_game.py`), the `MainCoder` **MUST** use the `write_to_file(path, content)` command. This command is idempotent; it will create the file if it doesn't exist or overwrite it if it does. Do NOT use `create_file` for the main application output, as this will fail on subsequent runs if the file already exists (e.g., during refinement steps).
+    6.  **Targeted File Modifications (Insertions/Edits)**:
+        *   When the user requests a targeted change within a file (e.g., "insert text B after existing text A", "edit text A to become text AB", "add a comment after a specific line"), `MainCoder` should preferably use the `replace_file_snippet(path, old_snippet, new_snippet)` command. This command is more precise than `write_to_file` for such modifications and avoids rewriting the entire file.
+        *   **Strategy for Insertion/Appending**: To insert `new_text` after `existing_text`, `MainCoder` should set `old_snippet = existing_text` and `new_snippet = existing_text + new_text` (ensure `new_text` includes appropriate leading/trailing newlines like `\\n` if it's a new line).
+        *   **Example Instruction for MainCoder (Planner to generate this type of instruction)**:
+            If the user asks to "add the comment '# Needs review' after the line `x = y + 10` in `logic.py`", a good instruction for MainCoder would be:
+            `replace_file_snippet('logic.py', 'x = y + 10', 'x = y + 10\\n# Needs review')`
+        *   **Crucially, remind MainCoder to follow all escaping rules for the `old_snippet` and `new_snippet` string arguments, similar to the `content` argument of `write_to_file` (newlines as `\\n`, backslashes as `\\\\`, quotes as `\\'` or `\\"`).**
 
 Analyze the user's request below and generate the JSON plan.
 
