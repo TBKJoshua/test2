@@ -90,6 +90,12 @@ You operate in a headless environment with full vision capabilities. The current
     `write_to_file("script.py", "def greet():\\n    print(\\"Hello, Agent!\\")\\ngreet()\\n# A comment with a ' quote.")`
 
     **IMPORTANT**: Do NOT include literal multi-line blocks (using triple quotes) directly as the content argument string in the command you output. Instead, construct a single string literal with `\\n` for newlines and escaped quotes as shown above. This is the safest way to ensure `ast.literal_eval` can parse it.
+- `replace_file_snippet(path, old_snippet, new_snippet)`: Replaces specific text snippets within a file.
+    - `path`: The path to the file.
+    - `old_snippet`: The exact text snippet to be replaced.
+    - `new_snippet`: The text snippet to replace the old one with.
+    - **CRITICAL FOR SNIPPET ARGUMENTS**: `old_snippet` and `new_snippet` strings MUST be valid Python string literals. Pay close attention to escaping special characters (newlines `\\n`, quotes `\\'` or `\\"`, backslashes `\\\\`) just like the `content` argument for `write_to_file`. Refer to the `write_to_file` examples for correct formatting.
+    - **Example**: `replace_file_snippet('settings.ini', 'debug_mode = true', 'debug_mode = false')`
 - `delete_file(path)`: Moves a file or directory to the project's .trash folder.
 - `rename_file(old_path, new_path)`: Renames a file or directory.
 - `run_command(command)`: Executes a shell command in the project directory. Note: This command is executed with the `vm/` directory as the current working directory (CWD). Therefore, paths within the `command` string should generally be relative to `vm/`, or use `.` to refer to `vm/` itself. For example, to list all files in `vm/`, use `run_command('dir /s /b')` (for Windows) or `run_command('ls -A .')` (for POSIX-like systems). To operate on a file `vm/foo.txt`, you can use `run_command('type foo.txt')` (Windows) or `run_command('cat foo.txt')` (POSIX). To list files in a subdirectory `vm/subdir/`, use `run_command('dir subdir /s /b')` or `run_command('ls -A subdir/')`.
@@ -757,6 +763,28 @@ Do NOT use this for simple clarifications you can ask the user about. ONLY use i
 *   **Output Format**: Your responses must be direct textual answers. Do not output commands (like backticked `run_command(...)`) or JSON code blocks.
 """
 
+TEXT_REPLACE_AGENT_PROMPT = """You are the TEXT REPLACE AGENT. Your task is to replace specific snippets of text within a file.
+You will be given:
+1.  `path`: The path to the file.
+2.  `old_snippet`: The exact text snippet to be replaced.
+3.  `new_snippet`: The text snippet to replace the old one with.
+
+Your goal is to use the `replace_file_snippet(path, old_snippet, new_snippet)` command.
+
+**IMPORTANT CONSIDERATIONS FOR SNIPPETS:**
+-   **Exact Matches:** The `old_snippet` must be an exact match for the text you want to replace.
+-   **Special Characters:** If `old_snippet` or `new_snippet` contain special characters (newlines, quotes, backslashes), they MUST be correctly escaped to form valid Python string literals for the command arguments. Follow the same escaping rules as the `write_to_file` command:
+    -   Newlines: `\\n`
+    -   Backslashes: `\\\\`
+    -   Single quotes within a single-quoted string: `\\'`
+    -   Double quotes within a double-quoted string: `\\"`
+-   **Example Command Usage:**
+    `replace_file_snippet('config.txt', 'version = \\'1.0\\'', 'version = \\'1.1\\'')`
+    `replace_file_snippet("notes.md", "Meeting at 2 PM", "Meeting at 3 PM")`
+
+Be precise. The command will handle cases where the `old_snippet` is not found, but you should aim to provide accurate snippets.
+"""
+
 def load_api_key():
     """Load API key from environment or config file"""
     if "GEMINI_API_KEY" in os.environ:
@@ -813,6 +841,7 @@ class EnhancedMultiAgentSystem:
             "set_user_preference": self._set_user_preference,
             "get_user_preference": self._get_user_preference,
             "list_directory_contents": self._list_directory_contents, # New entry
+            "replace_file_snippet": self._replace_file_snippet,
         }
 
     def load_user_preferences(self):
@@ -2711,6 +2740,37 @@ Focus on actionable improvements that leverage all three agent perspectives.
             return f"ℹ️ No items found in '{target_path_str}' (resolved to {resolved_scan_base_path})."
 
         return "\\n".join(output_items)
+
+    def _replace_file_snippet(self, path_str: str, old_snippet: str, new_snippet: str) -> str:
+        """Replaces all occurrences of old_snippet with new_snippet in the specified file."""
+        filepath = self._safe_path(path_str)
+        if not filepath:
+            return f"❌ Invalid path: {path_str}"
+        if not filepath.exists() or not filepath.is_file():
+            return f"❌ File not found or is not a file: {path_str}"
+
+        try:
+            content = filepath.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            return f"❌ Error reading file {path_str}: Not a valid UTF-8 text file."
+        except Exception as e:
+            return f"❌ Error reading file {path_str}: {e}"
+
+        if old_snippet not in content:
+            return f"ℹ️ Snippet not found in file: {path_str}. No changes made."
+
+        original_content = content
+        modified_content = content.replace(old_snippet, new_snippet)
+        occurrences = original_content.count(old_snippet)
+
+        try:
+            filepath.write_text(modified_content, encoding='utf-8')
+            if occurrences == 1:
+                return f"✅ Snippet replaced 1 time in {path_str}."
+            else:
+                return f"✅ Snippet replaced {occurrences} times in {path_str}."
+        except Exception as e:
+            return f"❌ Error writing to file {path_str}: {e}"
 
     def _create_file(self, path, content=""):
         """Create new file with enhanced error handling"""
