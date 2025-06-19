@@ -1874,6 +1874,7 @@ class EnhancedMultiAgentSystem:
                     else:
                         yield {"type": "error", "content": "Planner failed to generate a new plan after re-plan request. Stopping."}
                         replan_failed_to_get_new_steps = True
+                        completed_normally = False
                         break # Exit the while loop due to critical planning failure
 
                 if agent_name_for_status not in ["unknown_agent", "planner_agent_direct", "persona_agent"]:
@@ -2302,16 +2303,37 @@ Focus on actionable improvements that leverage all three agent perspectives.
 
             self._log_interaction("persona_agent_full_response", full_response_text)
 
-            # Check if the collected response is a REPLAN request
-            if full_response_text.strip().startswith("REQUEST_REPLAN:"):
-                replan_reason = full_response_text.strip()[len("REQUEST_REPLAN:"):] .strip()
-                # Return the replan signal directly, do not yield chat chunks
+            lines = full_response_text.strip().splitlines()
+            last_non_empty_line = None
+            last_non_empty_line_index = -1
+
+            for i in range(len(lines) - 1, -1, -1):
+                if lines[i].strip():
+                    last_non_empty_line = lines[i].strip()
+                    last_non_empty_line_index = i
+                    break
+
+            if last_non_empty_line and last_non_empty_line.startswith("REQUEST_REPLAN:"):
+                replan_reason = last_non_empty_line[len("REQUEST_REPLAN:"):] .strip()
+
+                text_before_replan_lines = lines[:last_non_empty_line_index]
+                text_before_replan = "\n".join(text_before_replan_lines).strip()
+
+                if text_before_replan:
+                    # Yield the preceding content.
+                    # Assuming 'collected_chunks' might not perfectly map to 'text_before_replan'
+                    # after splitting/joining, we yield 'text_before_replan' as a single unit.
+                    yield {"type": "agent_stream_chunk", "agent": "✨ Persona Agent", "content": text_before_replan + "\n"}
+
                 return {"status": "REPLAN_REQUESTED", "reason": replan_reason}
             else:
-                # If not a replan request, yield all collected chunks as normal chat messages
+                # If not a replan request, yield all collected chunks (which form full_response_text)
+                if not collected_chunks:
+                    collected_chunks = [full_response_text] # Fallback
+
                 for chunk in collected_chunks:
-                    yield {"type": "agent_stream_chunk", "agent": "✨ Persona Agent", "content": chunk}
-                # Return the full text for the previous_step_output in run_enhanced_interaction
+                    if chunk:
+                        yield {"type": "agent_stream_chunk", "agent": "✨ Persona Agent", "content": chunk}
                 return full_response_text
 
         except Exception as e:
