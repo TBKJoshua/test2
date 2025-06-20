@@ -96,6 +96,23 @@ You operate in a headless environment with full vision capabilities. The current
     - `new_snippet`: The text snippet to replace the old one with.
     - **CRITICAL FOR SNIPPET ARGUMENTS**: `old_snippet` and `new_snippet` strings MUST be valid Python string literals. Pay close attention to escaping special characters (newlines `\\n`, quotes `\\'` or `\\"`, backslashes `\\\\`) just like the `content` argument for `write_to_file`. Refer to the `write_to_file` examples for correct formatting.
     - **Example**: `replace_file_snippet('settings.ini', 'debug_mode = true', 'debug_mode = false')`
+- `edit_file_lines(path, start_line, end_line, new_content)`: Modifies a file by replacing a range of lines, inserting new lines, or deleting existing lines.
+    - `path`: The path to the file.
+    - `start_line`: The 1-indexed starting line number for the edit.
+    - `end_line`: The 1-indexed ending line number for the edit.
+        - If `end_line` is the same as `start_line` and `new_content` is provided, it replaces that single line.
+        - If `end_line` is the same as `start_line` and `new_content` is empty, it deletes that single line.
+        - If `end_line` is less than `start_line` (e.g., `start_line = 5, end_line = 4`) and `new_content` is provided, it inserts `new_content` *before* `start_line`. `end_line` is effectively ignored in this specific insertion case beyond indicating an insert-before action.
+        - If `end_line` is greater than `start_line`, it indicates replacing lines from `start_line` to `end_line` inclusive with `new_content`.
+        - If `new_content` is empty and `end_line` is greater than or equal to `start_line`, it indicates deleting lines from `start_line` to `end_line` inclusive.
+    - `new_content`: The new lines of text to insert or replace the existing lines with. This should be a single string, with actual newlines represented as `\\n`. If this string is empty, the specified lines (from `start_line` to `end_line`) will be deleted.
+    - **CRITICAL FOR `new_content` ARGUMENT**: The `new_content` string MUST be a valid Python string literal that `ast.literal_eval` can parse. Pay close attention to escaping special characters (newlines `\\n`, quotes `\\'` or `\\"`, backslashes `\\\\`) just like the `content` argument for `write_to_file`. Refer to the `write_to_file` examples for correct formatting.
+    - **Examples**:
+        - Replace line 5: `edit_file_lines('data.txt', 5, 5, 'New content for line 5')`
+        - Insert before line 3: `edit_file_lines('config.ini', 3, 2, '# New section\\nkey = value')` (Note: end_line < start_line for insert-before)
+        - Replace lines 10 to 12: `edit_file_lines('log.txt', 10, 12, 'Line 10 replacement\\nLine 11 replacement\\nLine 12 replacement')`
+        - Delete line 7: `edit_file_lines('old_code.py', 7, 7, '')`
+        - Delete lines 20 to 25: `edit_file_lines('chapter.md', 20, 25, '')`
 - `delete_file(path)`: Moves a file or directory to the project's .trash folder.
 - `rename_file(old_path, new_path)`: Renames a file or directory.
 - `run_command(command)`: Executes a shell command in the project directory. Note: This command is executed with the `vm/` directory as the current working directory (CWD). Therefore, paths within the `command` string should generally be relative to `vm/`, or use `.` to refer to `vm/` itself. For example, to list all files in `vm/`, use `run_command('dir /s /b')` (for Windows) or `run_command('ls -A .')` (for POSIX-like systems). To operate on a file `vm/foo.txt`, you can use `run_command('type foo.txt')` (Windows) or `run_command('cat foo.txt')` (POSIX). To list files in a subdirectory `vm/subdir/`, use `run_command('dir subdir /s /b')` or `run_command('ls -A subdir/')`.
@@ -137,6 +154,18 @@ You operate in a headless environment with full vision capabilities. The current
     *   **Fallback to `write_to_file`**: Only if `replace_file_snippet` is genuinely not applicable (e.g., the file does not exist, the `old_snippet` cannot be reliably determined or is not found, or the change is so extensive it constitutes a full rewrite), you should then, and only then, use `write_to_file(path, content)`.
     *   **Justify Bypassing `replace_file_snippet`**: If you decide to bypass `replace_file_snippet` for a modification task where it might seem applicable, you should be prepared to briefly state the reason if your output format allows (e.g., if asked for a summary before commands, though typically you output commands directly).
     *   For creating entirely **new files**, `write_to_file` (or `create_file` for empty files) remains appropriate.
+**11.B. PREFER `edit_file_lines` FOR TARGETED LINE EDITS**: When the task involves modifying specific lines (inserting before a line, replacing a single line, replacing a range of lines, or deleting one or more specific lines) and the line numbers are known or can be easily determined:
+    *   Your **preferred method should be** `edit_file_lines(path, start_line, end_line, new_content)`.
+    *   This is generally more precise and less prone to errors than `replace_file_snippet` when the changes are primarily line-based and you know the line numbers.
+    *   If the exact line numbers are not easily determinable but a unique snippet is, `replace_file_snippet` might still be appropriate.
+    *   For extensive changes or full rewrites, `write_to_file` remains the fallback.
+**11.C. PROACTIVE MODULE INSTALLATION FOR PYTHON SCRIPTS:** When executing a Python script using `run_command` (e.g., `run_command('python your_script.py')`) and the script fails with a `ModuleNotFoundError` or `ImportError` (visible in the `stderr` of the `run_command` result):
+        1.  **Identify Module:** From the error message (e.g., "No module named 'pygame'"), identify the name of the missing module (e.g., 'pygame').
+        2.  **Attempt Install:** Issue a command to install the module. Try `run_command('python -m pip install module_name')` first (replacing `module_name`). If that seems to fail or if `python -m pip` itself is problematic, you can try `run_command('pip install module_name')` as a fallback.
+        3.  **Log Action:** After issuing the install command, output a `System Message:` (plain text, not a command) indicating the attempted installation. For example: "System Message: Attempted to install missing module 'pygame' using 'python -m pip install pygame'."
+        4.  **Retry Original Command:** If the installation command appears to execute without critical 'command not found' errors for `pip` itself, re-issue the original `run_command` that failed (e.g., `run_command('python your_script.py')`).
+        5.  **Report Failure to Install:** If the installation command itself fails significantly (e.g., `pip` not found) or if the script *still* fails with the same `ModuleNotFoundError` after your installation attempt, then report this outcome. The system may then escalate to the Planner.
+        *   **Important Note on `pip` command failure for the agent**: If `run_command('python -m pip install ...')` fails with an error indicating `pip` itself or the `-m` option is not found with `python`, it should try the simpler `run_command('pip install ...')`. If both of these `pip` invocations fail because the `pip` command is not found, the agent should then request a re-plan, stating that `pip` is unavailable. It should *not* get stuck in a loop trying to install `pip` itself.
 12. **REQUESTING A RE-PLAN (USE EXTREMELY RARELY):**
     In exceptional situations where you, after attempting to execute your assigned task, determine that the entire current plan is fundamentally flawed or impossible due to unforeseen critical issues that you cannot resolve (e.g., a core assumption of the plan is incorrect, a critical unresolvable dependency, or your actions have revealed information that invalidates the remaining planned steps), you may request a system re-plan.
     To do this, ensure the VERY LAST LINE of your entire output is the exact directive:
@@ -196,6 +225,11 @@ When given a general task like "improve my game," "develop a data parser," or "e
         *   "System Message: No specific UI was mentioned for enhancement. I have created a basic HTML structure in 'vm/foundational_ui.html'. I will now enhance this file."
     *   This "System Message:" should appear in your output stream *before* any subsequent commands related to modifying or using this newly created foundational item.
 4.  **Proceed with Original Task**: After creating and logging the foundational item, proceed to apply the original "improvement," "development," or "enhancement" instructions to this newly created file. Your subsequent commands should target this new file.
+        *   When proceeding with the 'improvement,' 'development,' or 'enhancement' on the foundational or identified file, **first consider if the intended improvements can be broken down into small, specific, incremental changes.**
+        *   For example: Can you add a missing docstring to a function? Can you add type hints to a function signature? Can you rename a local variable for clarity? Can you add a simple error check for a common case? Can you insert a clarifying comment?
+        *   If you identify such targeted improvements that can be made to the existing content (either the foundational code you just wrote or an existing file you've identified for improvement), you **SHOULD attempt to implement these initial targeted changes using `edit_file_lines` or `replace_file_snippet` first.**
+        *   Issue these granular commands for the initial small enhancements. After these targeted changes, if your overall improvement plan still involves more substantial structural modifications, additions of large new blocks of code, or extensive rewriting that is not suitable for `edit_file_lines` or `replace_file_snippet`, you may then proceed to use `write_to_file` to apply those larger changes to the (now incrementally improved) file.
+        *   The goal is to make verifiable, granular changes where possible, rather than immediately resorting to a full `write_to_file` for every general 'improvement' task, especially on foundational code you just created or when the overall task implies refinement rather than complete replacement.
 
 **EXECUTING PRIMARY PYTHON APPLICATION:**
 When you receive an instruction from the Planner like "Execute the primary Python application found in the `vm/` directory..." you MUST follow this logic:
@@ -418,7 +452,7 @@ When a `REPLAN_REQUEST` is triggered by an agent, carefully analyze the `Reason 
       {"agent_name": "PersonaAgent", "instruction": "Review the completion of the original user request: '[Original User Prompt]'. Analyze the actions taken and determine if the goal has been fully met or if further actions/a re-plan is required.", "is_final_step": true}
     ]
     ```
-    This strategy ensures the system attempts to self-clarify before asking the user.
+    This strategy ensures the system attempts to self-clarify before asking the user. For code improvement tasks identified this way, the plan should then proceed to an analysis step with `CodeCritic` before `MainCoder` attempts modifications, as detailed in the "Strategy for 'Improve/Refactor' Requests".
 
 *   **Leveraging User Preferences**: If the user expresses a preference (e.g., "I always want my Python code to include type hints"), you can plan a step for `MainCoder` to save this using `set_user_preference('python_style', 'type_hints')`. Later, when generating Python code, `MainCoder` (or you can instruct it) could use `get_user_preference('python_style')` to apply this preference.
 
@@ -451,6 +485,58 @@ When a `REPLAN_REQUEST` is triggered by an agent, carefully analyze the `Reason 
           {"agent_name": "PersonaAgent", "instruction": "Review the completion of the original user request: '[Original User Prompt]'. Analyze the actions taken and determine if the goal has been fully met or if further actions/a re-plan is required.", "is_final_step": true}
         ]
         ```
+
+*   **Strategy for Planning File Modifications (Prioritize Granular Edits):**
+    *   When the user requests modifications to an existing file (e.g., editing, changing, inserting, adding to, deleting from), your generated plan for `MainCoder` **MUST** prioritize the use of `edit_file_lines` or `replace_file_snippet` over `write_to_file`.
+    *   `edit_file_lines` is preferred for changes where line numbers are known or can be easily determined (e.g., 'change line 5', 'insert after line 10', 'delete lines 3-7').
+    *   `replace_file_snippet` is preferred when exact line numbers are not the primary reference, but a specific, unique piece of text (the `old_snippet`) needs to be replaced with `new_snippet`.
+    *   `write_to_file` should generally be reserved for:
+        *   Creating entirely new files.
+        *   Situations where a CodeCritic analysis explicitly recommends a full rewrite due to the extent of changes.
+        *   When the user explicitly asks for a file to be completely overwritten with new content.
+    *   Remember that `MainCoder` (in its own `MAIN_AGENT_PROMPT` Rules 11.A and 11.B) is also instructed to prefer these granular commands. Your plans should facilitate this.
+    *   **Examples of Plans for Modifications:**
+        *   **User Request Example 1:** "In `config.py`, change the value of `TIMEOUT` on line 12 from `60` to `120`."
+            *   **Good Plan Step for MainCoder:** `{"agent_name": "MainCoder", "instruction": "Use `edit_file_lines('config.py', 12, 12, 'TIMEOUT = 120')` to change the timeout value.", "is_final_step": false}`
+        *   **User Request Example 2:** "In `main_app.py`, add the comment `# TODO: Add error handling` before the line containing `result = process_data(data)`."
+            *   **Good Plan (Multi-step if line number needs finding first):**
+                1.  `{"agent_name": "MainCoder", "instruction": "Read the content of `main_app.py` using `run_command('cat main_app.py')` to find the line number for 'result = process_data(data)'.", "is_final_step": false}`
+                2.  `{"agent_name": "MainCoder", "instruction": "Analyze the output from the previous step. Identify the line number (let's say it's L) for `result = process_data(data)`. Then, use `edit_file_lines('main_app.py', L, L-1, '# TODO: Add error handling')` to insert the comment before that line.", "is_final_step": false}` (Note: `L-1` for `end_line` signals insert-before for `edit_file_lines` as per `MainCoder`'s command spec).
+        *   **User Request Example 3:** "In `styles.css`, replace all occurrences of `color: #333;` with `color: var(--text-primary);`"
+            *   **Good Plan Step for MainCoder:** `{"agent_name": "MainCoder", "instruction": "Use `replace_file_snippet('styles.css', 'color: #333;', 'color: var(--text-primary);')`.", "is_final_step": false}`
+
+*   **Strategy for Complex Tasks: Detailed Multi-Step Plans & Analysis-First:**
+    *   For complex user requests, especially those involving modifications to existing code based on general goals (e.g., 'refactor this file,' 'improve the error handling in this module,' 'add a feature to this class'), you should break the task down into more detailed, sequential steps.
+    *   Often, an **Analysis-Then-Action** pattern is most effective:
+        *   **Step 1 (Context Gathering/Analysis):** If the full context of a file isn't already clearly in context for subsequent agents or if specific details need to be pinpointed, the first step for `MainCoder` might be to read the relevant file content (e.g., using `run_command('cat some_file.py')`). The output of this will then be available to subsequent agents in their context. This step can also be used by `MainCoder` to list directory contents if the target file itself is initially unknown.
+        *   **Step 2 (Critique/Detailed Identification):** Task `CodeCritic` (or `ArtCritic` for visual tasks) to analyze the gathered content (or the user's request directly if enough detail is provided). Critically, the instruction to `CodeCritic` must ask it to:
+            *   Identify specific areas for improvement or refactoring.
+            *   Provide *concrete, actionable suggestions*.
+            *   These suggestions should be detailed enough to be implementable with `edit_file_lines` or `replace_file_snippet`. For example, `CodeCritic` should suggest new code snippets, identify exact old snippets to be replaced, or specify line numbers for insertions/deletions. It should explicitly state if a change is too large for granular edits and truly requires a full rewrite.
+        *   **Step 3+ (Implementation):** Subsequent steps for `MainCoder` **MUST** be based on the *specific, actionable feedback* provided by `CodeCritic`. These steps should primarily use `edit_file_lines` or `replace_file_snippet` as per the "Strategy for Planning File Modifications." There might be multiple such `MainCoder` steps if the critique identified several distinct changes.
+        *   **Full Rewrite (MainCoder - Conditional):** Only if `CodeCritic` explicitly recommends a full rewrite due to the extensive nature of the necessary changes, or if the user's original request was an explicit command to rewrite the entire file, should you plan a `write_to_file` step for the main content modification. Creating new helper files, if needed, would still use `write_to_file`.
+    *   Ensure each step's instruction is clear and focused. Properly manage the `is_final_step` flag: only the very last step in the entire sequence (which must be `PersonaAgent` for final review) should have `is_final_step: true`.
+    *   **Example of a Detailed, Multi-Step Plan:**
+        *   **User Request Example:** "Refactor `calculator.py` to improve the `add` function by adding type hints and a proper docstring."
+        *   **Good Multi-Step Plan Example:**
+            ```json
+            [
+              {"agent_name": "MainCoder", "instruction": "Output the full current content of `vm/calculator.py` using `run_command('cat calculator.py')` so CodeCritic can analyze it.", "is_final_step": false},
+              {"agent_name": "CodeCritic", "instruction": "Analyze the provided content of `calculator.py`. Specifically for the `add` function, identify: 1. The exact line numbers of the function definition. 2. The current parameters. 3. Provide the complete, refactored `add` function signature with type hints for all parameters and the return type. 4. Write a complete docstring for the `add` function explaining its purpose, arguments, and what it returns. Your output should clearly separate the items needed by MainCoder for `edit_file_lines` (e.g., line numbers, new content snippets).", "is_final_step": false},
+              {"agent_name": "MainCoder", "instruction": "Based on the CodeCritic's feedback ({CODE_CRITIC_FEEDBACK_PLACEHOLDER}): Use `edit_file_lines` to replace the existing `add` function signature in `calculator.py` with the new signature including type hints. Then, use another `edit_file_lines` command to insert the new docstring immediately after the `add` function definition line. Ensure correct escaping for the content strings in your commands.", "is_final_step": false},
+              {"agent_name": "PersonaAgent", "instruction": "Review the completion of the original user request: 'Refactor `calculator.py` to improve the `add` function by adding type hints and a proper docstring.'. Analyze the actions taken and determine if the goal has been fully met or if further actions/a re-plan is required.", "is_final_step": true}
+            ]
+            ```
+
+*   **Strategy for 'Improve/Refactor' Requests (Analysis-First):**
+    When the user requests a general improvement, refactoring, or enhancement of existing code (e.g., "improve `foo.py`", "refactor `my_class` in `bar.py`", "enhance the game's physics"), and the request does not specify the exact changes to be made:
+    1.  **Contextualize/Retrieve Content (MainCoder):** If the full content of the relevant file(s) is not clearly in context or needs to be identified first, the initial step(s) should be for `MainCoder` to list files (e.g., `list_directory_contents(target_path="relevant_module_path")`) and/or retrieve file content (e.g., `run_command('cat relevant_file.py')`).
+    2.  **Detailed Analysis & Suggestion (CodeCritic/ArtCritic):** The next step **MUST** be to task the appropriate critique agent (`CodeCritic` for code, `ArtCritic` for visuals/UI).
+        *   Instruct the critique agent to analyze the retrieved content or the user's general goal.
+        *   **Crucially, the critique agent MUST be asked to identify specific areas for improvement and provide concrete, actionable suggestions detailed enough for `MainCoder` to implement using granular commands.** For `CodeCritic`, this means suggesting new code snippets, identifying exact old snippets for replacement, or specifying line numbers for insertions/deletions. It should also state if a change is too extensive and genuinely requires a full rewrite.
+    3.  **Targeted Implementation (MainCoder):** Subsequent steps for `MainCoder` **MUST** be based on the *specific, actionable feedback* from the critique agent. These steps should primarily use `edit_file_lines` or `replace_file_snippet`.
+    4.  **Full Rewrite (MainCoder - Conditional):** Only if `CodeCritic` explicitly recommends a full rewrite, or if the user's original request was an explicit command to rewrite the entire file, should a `write_to_file` command be planned for the main content modification.
+    *   This "Analysis-First" approach ensures that `MainCoder` acts on specific guidance, aligning with its preference for granular edits (Rules 11.A, 11.B in `MAIN_AGENT_PROMPT`).
 
 *   **CRITIQUE-DRIVEN DEVELOPMENT STRATEGY:**
     When the user requests a modification, fix, improvement, or refactoring of existing code or visual assets:
@@ -600,6 +686,17 @@ When a `REPLAN_REQUEST` is triggered by an agent, carefully analyze the `Reason 
               ]
               ```
     *   Always consult your `RECENT ERRORS (LOG):` context when deciding on this strategy. Prioritize clear environmental errors for `PersonaAgent`, then clear code errors for `MainCoder`.
+
+        *   **Handling `ModuleNotFoundError` Re-plan (Specific to MainCoder):**
+            If a `REPLAN_REQUEST` is received, and the `Reason for Re-plan` (from `MainCoder`) explicitly indicates a `ModuleNotFoundError` or `ImportError` (e.g., "ModuleNotFoundError: No module named 'pygame'") and `MainCoder` confirms it could not resolve it (either its own installation attempt failed, or it determined `pip` was unavailable as per its Rule 11.C):
+            1.  **Extract Module Name:** Identify the `missing_module_name` from the re-plan reason.
+            2.  **Plan Installation by MainCoder:** The *first step* in the new plan for `MainCoder` **MUST** be to attempt installing this specific module.
+                *   Instruction for MainCoder: "The previous script execution failed due to `ModuleNotFoundError: No module named 'missing_module_name'`. Attempt to install it. First, try `run_command('python -m pip install missing_module_name')`. If that fails (e.g., `pip` or `-m` not found with `python`), then try `run_command('pip install missing_module_name')`. After the attempt, output a `System Message:` indicating the command used and its apparent success or failure (based on `stderr` of the install command: a clean run suggests success, errors suggest failure). This installation step is critical." (Replace `missing_module_name` dynamically).
+            3.  **Plan Retry of Original Action:** The *second step* for `MainCoder` **MUST** be to re-attempt the original action that led to the `ModuleNotFoundError`.
+                *   Instruction for MainCoder: "After attempting to install `missing_module_name`, re-attempt the original action: [Original Action Instruction that Failed - e.g., 'Execute the script `your_script.py` using `run_command(\\'python your_script.py\\')`']. Check `stderr` carefully. If the `ModuleNotFoundError` for `missing_module_name` persists, or if `pip` was not found during install, you MUST request a re-plan again, clearly stating the module name and that the installation attempt (or `pip` availability) failed." (Dynamically fill bracketed parts).
+            4.  **Subsequent Re-plan (If Still Failing):** If, after `MainCoder` attempts these two steps, another `REPLAN_REQUEST` is received for the *same* `ModuleNotFoundError` for the *same module*, or because `pip` was confirmed unavailable by `MainCoder`:
+                *   Then, the new plan's first step **MUST** be for `PersonaAgent`.
+                *   Instruction for `PersonaAgent`: "Inform the user that `MainCoder` encountered a persistent `ModuleNotFoundError` for '`missing_module_name`'. Explain that an attempt to install it using `pip` was made by `MainCoder` but the module is still not found (or `pip` itself was not available). Ask the user for guidance, such as alternative installation methods, package names, or if they can ensure the module and `pip` are correctly installed in the environment." (Dynamically fill `missing_module_name`).
 
 *   **Handling Specific Agent-Initiated Re-plan Actions (e.g., Request to Read File):**
     If the `REPLAN_REQUEST` reason clearly indicates a need for `MainCoder` to read the full content of a specific file (e.g., "MainCoder needs to read the full content of 'filename.py'" from PersonaAgent), then:
@@ -871,6 +968,7 @@ class EnhancedMultiAgentSystem:
             "get_user_preference": self._get_user_preference,
             "list_directory_contents": self._list_directory_contents, # New entry
             "replace_file_snippet": self._replace_file_snippet,
+            "edit_file_lines": self._edit_file_lines,
         }
 
     def load_user_preferences(self):
@@ -1902,9 +2000,69 @@ class EnhancedMultiAgentSystem:
                     yield {"type": "agent_status_update", "agent": agent_name_for_status, "status": "inactive"}
 
                 previous_step_output = step_output_data
-
                 output_from_completed_step_for_maincoder = None
-                if isinstance(previous_step_output, dict):
+
+                # New logic to extract stdout for specific run_command outputs
+                extracted_stdout_for_next_step = None
+                main_coder_instruction = step.get('instruction', "").lower() # instruction for the MainCoder step
+
+                direct_output_commands = ["run_command('cat ", "run_command('type ", "run_command('ls ", "run_command('dir "]
+                was_direct_output_command = any(cmd_prefix in main_coder_instruction for cmd_prefix in direct_output_commands)
+
+                if agent_name_from_plan == "MainCoder" and was_direct_output_command and isinstance(step_output_data, dict):
+                    # Attempt to find the command executed by MainCoder to match its output
+                    # This is a simplified way to get the command string from the instruction.
+                    # A more robust regex might be needed if instructions get very complex.
+                    cmd_match = re.search(r"run_command\(['\"](.*?)['\"]\)", step.get('instruction', ""))
+                    command_executed_by_main_coder_str = cmd_match.group(1) if cmd_match else "dummy_command_string_to_avoid_none"
+
+                    for result_item in step_output_data.get("implementation_results", []):
+                        if result_item.get("type") == "system" and isinstance(result_item.get("content"), str):
+                            content_str = result_item.get("content", "")
+                            # Check if this result_item is for the command we are interested in
+                            if f"🔧 Command: {command_executed_by_main_coder_str}" in content_str or \
+                               (command_executed_by_main_coder_str == "dummy_command_string_to_avoid_none" and \
+                                any(cmd_prefix.split('(')[1].replace("'","") in content_str for cmd_prefix in direct_output_commands) ): # Fallback if regex fails
+
+                                stdout_marker = "📤 STDOUT:\n"
+                                if stdout_marker in content_str:
+                                    stdout_start_index = content_str.find(stdout_marker) + len(stdout_marker)
+
+                                    # Determine end of stdout
+                                    stderr_marker = "\n⚠️ STDERR:"
+                                    success_marker = "\n✅ Command completed successfully"
+
+                                    end_index_stderr = content_str.find(stderr_marker, stdout_start_index)
+                                    end_index_success = content_str.find(success_marker, stdout_start_index)
+
+                                    if end_index_stderr != -1 and end_index_success != -1:
+                                        end_index = min(end_index_stderr, end_index_success)
+                                    elif end_index_stderr != -1:
+                                        end_index = end_index_stderr
+                                    elif end_index_success != -1:
+                                        end_index = end_index_success
+                                    else:
+                                        # If neither marker is found, take the rest of the string,
+                                        # but try to strip common command output footers if they are at the very end
+                                        temp_stdout = content_str[stdout_start_index:].strip()
+                                        common_footers = [
+                                            "Command completed successfully",
+                                            "command completed successfully" # case variations
+                                        ]
+                                        # This footer stripping is basic; a more robust solution might be needed
+                                        # if footers are complex or vary significantly.
+                                        # For now, we'll assume stdout is the bulk of the remaining content.
+                                        # This part is tricky because STDOUT itself might be empty.
+                                        end_index = len(content_str) # Default to end of string.
+
+                                    extracted_stdout_for_next_step = content_str[stdout_start_index:end_index].strip()
+                                    # If STDOUT was truly empty, extracted_stdout_for_next_step will be empty string here.
+                                    # If it only contained newlines, strip() handles it.
+                                    break # Found the relevant stdout
+
+                if extracted_stdout_for_next_step is not None: # This includes empty string if stdout was empty
+                    output_from_completed_step_for_maincoder = extracted_stdout_for_next_step
+                elif isinstance(previous_step_output, dict): # Fallback to existing logic
                     if previous_step_output.get("type") == "system" and isinstance(previous_step_output.get("content"), str):
                         output_from_completed_step_for_maincoder = previous_step_output.get("content")
                     elif previous_step_output.get("type") == "agent" and previous_step_output.get("agent") == "✨ Assistant" and isinstance(previous_step_output.get("content"), str):
@@ -1913,7 +2071,6 @@ class EnhancedMultiAgentSystem:
                         output_from_completed_step_for_maincoder = previous_step_output["text_response"]
                 elif isinstance(previous_step_output, str):
                     output_from_completed_step_for_maincoder = previous_step_output
-
 
                 if is_final_step:
                      yield {"type": "system", "content": f"✅ Final step ({agent_name_from_plan}) completed."}
@@ -2822,6 +2979,110 @@ Focus on actionable improvements that leverage all three agent perspectives.
                 return f"✅ Snippet replaced {occurrences} times in {path_str}."
         except Exception as e:
             return f"❌ Error writing to file {path_str}: {e}"
+
+    def _edit_file_lines(self, path_str: str, start_line_usr: int, end_line_usr: int, new_content_str: str) -> str:
+        """
+        Modifies a file by replacing, inserting, or deleting lines.
+        Uses 1-indexed line numbers as input, matching agent's perspective.
+        """
+        filepath = self._safe_path(path_str)
+        if not filepath:
+            return f"❌ Error: Invalid path provided: {path_str}"
+        if not filepath.exists() or not filepath.is_file():
+            return f"❌ Error: File not found or is not a file: {path_str}"
+
+        try:
+            # Read lines. splitlines() handles various newline chars and doesn't keep them.
+            # If file is empty, lines will be []. If file has one empty line, lines will be [''].
+            original_content = filepath.read_text(encoding='utf-8')
+            lines = original_content.splitlines()
+        except UnicodeDecodeError:
+            return f"❌ Error reading file {path_str}: Not a valid UTF-8 text file."
+        except IOError as e:
+            return f"❌ Error reading file {path_str}: {e}"
+
+        # Validate line numbers
+        if not (isinstance(start_line_usr, int) and isinstance(end_line_usr, int)):
+            return "❌ Error: Line numbers must be integers."
+
+        num_lines = len(lines)
+
+        # Agent signals insertion with end_line < start_line.
+        # Internally, we can map this to a consistent operation or use a special marker.
+        # For this implementation, let's use the agent's convention directly.
+        is_insertion = end_line_usr < start_line_usr
+        is_deletion = not new_content_str # Truly empty string for new_content means deletion
+
+        if is_deletion:
+            if not (1 <= start_line_usr <= num_lines and 1 <= end_line_usr <= num_lines and start_line_usr <= end_line_usr):
+                return f"❌ Error: Invalid line numbers for deletion. File has {num_lines} lines. Received start={start_line_usr}, end={end_line_usr}."
+        elif is_insertion: # Agent signals insert by end_line_usr < start_line_usr
+            if not (1 <= start_line_usr <= num_lines + 1):
+                return f"❌ Error: Invalid start_line for insertion. File has {num_lines} lines. Received start={start_line_usr} (max {num_lines + 1} to append)."
+            # end_line_usr is not further validated for insertion as per spec
+        else: # Replacement (start_line_usr <= end_line_usr and new_content_str is not empty)
+            if not (1 <= start_line_usr <= num_lines and 1 <= end_line_usr <= num_lines and start_line_usr <= end_line_usr):
+                # Allow replacing line 1 of an empty file if it's considered to have one empty line.
+                # However, splitlines() on an empty file returns [], so num_lines is 0.
+                # If file has one line "foo", num_lines is 1. lines[0] is "foo".
+                # start_line_usr=1, end_line_usr=1 is valid.
+                if num_lines == 0 and start_line_usr == 1 and end_line_usr == 1: # Special case: "replacing" the (non-existent) first line of an empty file
+                    pass # This will effectively become an insertion at the beginning.
+                elif num_lines == 1 and lines == [''] and start_line_usr == 1 and end_line_usr == 1: # Special case: replacing the single empty line
+                    pass
+                else:
+                    return f"❌ Error: Invalid line numbers for replacement. File has {num_lines} lines. Received start={start_line_usr}, end={end_line_usr}."
+
+        s_idx = start_line_usr - 1  # Convert to 0-based index
+
+        new_lines = new_content_str.splitlines() if new_content_str else []
+        if new_content_str == "": # Distinguish deleting content vs. providing an empty line
+            if not is_deletion: # if it's not a deletion, it's replacing with one empty line
+              new_lines = ['']
+
+
+        action_summary = ""
+
+        if is_deletion:
+            e_idx = end_line_usr - 1
+            del lines[s_idx : e_idx + 1]
+            action_summary = f"✅ Lines {start_line_usr}-{end_line_usr} deleted from {filepath.name}."
+            if start_line_usr == end_line_usr:
+                 action_summary = f"✅ Line {start_line_usr} deleted from {filepath.name}."
+        elif is_insertion: # end_line_usr < start_line_usr
+            # Insert new_lines before lines[s_idx]
+            lines[s_idx:s_idx] = new_lines
+            action_summary = f"✅ Content inserted before line {start_line_usr} in {filepath.name}."
+        else: # Replacement
+            e_idx = end_line_usr - 1
+            if num_lines == 0 and s_idx == 0: # Replacing "line 1" of an empty file
+                lines = new_lines
+            else:
+                lines[s_idx : e_idx + 1] = new_lines
+
+            if start_line_usr == end_line_usr:
+                action_summary = f"✅ Line {start_line_usr} replaced in {filepath.name}."
+            else:
+                action_summary = f"✅ Lines {start_line_usr}-{end_line_usr} replaced in {filepath.name}."
+
+        modified_content = "\n".join(lines)
+        # Ensure a final newline if the original content had one and the modified content is not empty,
+        # or if the original file was empty and content was added.
+        if (original_content.endswith('\n') and modified_content) or \
+           (not original_content and modified_content):
+            if not modified_content.endswith('\n'):
+                 modified_content += '\n'
+
+        # If all lines are deleted, the file should be empty, not contain a single newline.
+        if not lines and not new_lines and is_deletion: # Check if lines is empty after deletion
+            modified_content = ""
+
+
+        try:
+            filepath.write_text(modified_content, encoding='utf-8')
+            return action_summary
+        except IOError as e:
+            return f"❌ Error writing edited content to file {path_str}: {e}"
 
     def _create_file(self, path, content=""):
         """Create new file with enhanced error handling"""
