@@ -1923,17 +1923,33 @@ class EnhancedMultiAgentSystem:
                     except StopIteration as e:
                         returned_main_coder_data = e.value # This will be the dict {text_response, implementation_results, ...}
 
-                    # If a replan was triggered within the generator, returned_main_coder_data might be None
-                    # and we should skip subsequent processing for this step.
+                    # NEW LOGIC TO HANDLE REPLAN SIGNAL FROM AGENT EXECUTION PHASE
+                    if isinstance(returned_main_coder_data, dict) and returned_main_coder_data.get("replan_triggered"):
+                        replan_requested_this_step = True
+                        replan_reason = returned_main_coder_data.get("reason", "Replan triggered by MainCoder execution phase.")
+                        replan_triggering_agent = returned_main_coder_data.get("agent_name", "MainCoder")
+                        # Ensure step_output_data is neutral for the next agent
+                        step_output_data = None
+                        # Yield a message to UI/queue about this specific replan trigger
+                        yield {"type": "replan_request", "reason": replan_reason, "agent_name": replan_triggering_agent}
+                    # END OF NEW LOGIC
+
+                    # If a replan was triggered within the generator or by the new logic above,
+                    # returned_main_coder_data might be None or already processed.
+                    # The existing replan_requested_this_step flag will handle skipping further normal processing.
                     if replan_requested_this_step:
-                        step_output_data = None # Ensure no further processing of 'normal' output
-                    elif returned_main_coder_data is None:
+                        # If step_output_data was not already set to None by the new replan logic,
+                        # ensure it's None to prevent passing replan signals as regular output.
+                        if step_output_data is not None : # Check if it was already neutralized
+                             step_output_data = None # Ensure no further processing of 'normal' output
+                    elif returned_main_coder_data is None: # This case handles if _execute_main_coder_phase itself returns None
                         self.error_context.append("MainCoder phase failed to return data (returned None).")
                         step_output_data = {"error": "MainCoder phase failed to return data.", "implementation_results": [], "text_response": "", "generated_image_paths": []}
-                    else:
+                    else: # This is the normal path if no replan was triggered yet by the execution phase itself
                         step_output_data = returned_main_coder_data
 
-                        # Handle MainCoder's direct LLM text ending with REQUEST_REPLAN:
+                        # Handle MainCoder's direct LLM text output ending with REQUEST_REPLAN:
+                        # This is a secondary way a replan can be signaled, via text.
                         if not replan_requested_this_step and isinstance(step_output_data, dict) and "text_response" in step_output_data:
                             response_text = step_output_data["text_response"]
                             lines = response_text.strip().splitlines()
@@ -1942,9 +1958,11 @@ class EnhancedMultiAgentSystem:
                                 replan_reason = lines[-1][len("REQUEST_REPLAN:"):] .strip()
                                 replan_triggering_agent = "MainCoder" # Explicitly set for replan context
                                 # Yield this as a structured message
-                                yield {"type": "replan_request", "reason": replan_reason, "agent_name": replan_triggering_agent} # Changed from string yield to dict
+                                yield {"type": "replan_request", "reason": replan_reason, "agent_name": replan_triggering_agent}
                                 # Remove the REPLAN_REQUEST line from the text_response for the next step's context
-                                step_output_data["text_response"] = "\n".join(lines[:-1]).strip()
+                                if step_output_data and "text_response" in step_output_data: # Ensure step_output_data is not None
+                                    step_output_data["text_response"] = "\n".join(lines[:-1]).strip()
+                                # If step_output_data became None due to an earlier replan, this modification is skipped, which is fine.
 
 
                 elif agent_name_from_plan == "CodeCritic":
